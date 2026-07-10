@@ -1,5 +1,10 @@
 # credswitch
 
+[![npm](https://img.shields.io/npm/v/credswitch)](https://www.npmjs.com/package/credswitch)
+[![CI](https://github.com/itsmasabdi/credswitch/actions/workflows/ci.yml/badge.svg)](https://github.com/itsmasabdi/credswitch/actions/workflows/ci.yml)
+[![node](https://img.shields.io/node/v/credswitch)](https://www.npmjs.com/package/credswitch)
+[![license](https://img.shields.io/npm/l/credswitch)](./LICENSE)
+
 **One identity context per project — for every CLI and AI agent.**
 
 `cd ~/clients/acme` and your Azure CLI, GitHub CLI, gcloud, kubectl, **Claude Code, and Codex** all switch to that client's accounts. Leave the folder and they switch back. Like a Python virtualenv, but for who you are.
@@ -107,10 +112,10 @@ Three ways to create an account:
 When an account is added (or `csw account login` succeeds), the verified identity — user, subscription, tenant — is **pinned**. From then on, `csw doctor` fails loudly if the state answers as anyone else:
 
 ```
-!  azure:tfe identity drift:
-     pinned: mabdi@client-a.com — CLIENT-A-PROD tenant 080a8ef5…
-     actual: you@personal.com — Personal subscription tenant 62a58fb7…
-     accept the new identity with: csw account pin azure:tfe
+!  azure:acme identity drift:
+     pinned: you@acme-consulting.com — ACME-PROD tenant aaaa1111…
+     actual: you@outlook.com — Personal subscription tenant bbbb2222…
+     accept the new identity with: csw account pin azure:acme
 ```
 
 That catches the classic consultant accident — an `az login` run in the wrong terminal — before it becomes a deployment into the wrong tenant.
