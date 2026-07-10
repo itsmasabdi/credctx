@@ -1,6 +1,7 @@
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
+import path from "node:path";
 import { adapterNames, getAdapter, type AccountConfig } from "./adapters.js";
 import {
   configExists,
@@ -655,6 +656,12 @@ export function cmdEnv(args: string[]): void {
   const cwdOpt = opts.cwd as string | undefined;
   if (!cwdOpt) throw new CliError("Usage: csw env --cwd <dir> | csw env --clear");
 
+  // No config at all isn't a failure for the hook — it's "nothing configured".
+  if (!configExists()) {
+    for (const line of shellLines(clearedEnv())) console.log(line);
+    return;
+  }
+
   const config = loadConfig();
   // Location-only resolution: an empty env excludes pins and inherited contexts.
   const res = resolveContext(config, { env: {}, cwd: cwdOpt });
@@ -746,4 +753,260 @@ export function cmdDoctor(args: string[]): void {
 
   if (failed) throw new CliError("\nDoctor found issues.", 2);
   console.log("\nAll checks passed.");
+}
+
+// ---------------------------------------------------------------------------
+// porcelain: setup / local / login
+//
+// The everyday interface. A folder gets an identity the moment you log in
+// inside it — context creation, naming, and binding are inferred. The
+// accounts/contexts/bindings commands above remain as plumbing.
+
+function ensureConfig(): void {
+  if (!configExists()) saveConfig(emptyConfig());
+}
+
+function forbidBroadDir(dir: string): void {
+  if (dir === "/" || dir === realpathSafe(os.homedir())) {
+    throw new CliError(
+      `Refusing to bind ${dir === "/" ? "the filesystem root" : "your home directory"} — ` +
+        `that would apply one identity to everything.\n` +
+        `cd into a project folder, or use --global for your machine-wide default.`
+    );
+  }
+  if (/[\t\n]/.test(dir)) throw new CliError("Directory paths with tabs or newlines cannot be bound.");
+}
+
+function contextNameForDir(config: Config, dir: string): string {
+  const base = path.basename(dir).replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[^A-Za-z0-9]+/, "") || "project";
+  let name = base;
+  let n = 2;
+  while (config.contexts[name]) name = `${base}-${n++}`;
+  return name;
+}
+
+function hookActiveHere(): boolean {
+  return Boolean(process.env.CREDSWITCH_HOOK_KEY || process.env.CREDSWITCH_OVERRIDE);
+}
+
+function hintHookIfMissing(): void {
+  if (!hookActiveHere()) {
+    console.log("Automatic switching isn't active in this shell yet — run 'csw setup' once, then restart the shell.");
+  }
+}
+
+export function cmdLocal(args: string[]): void {
+  const { pos } = parseArgs(args);
+  ensureConfig();
+  const dir = realpathSafe(process.cwd());
+
+  if (pos.length === 0) {
+    const config = loadConfig();
+    const res = resolveContext(config, { env: {}, cwd: dir });
+    if (res.source === "binding") {
+      console.log(`${res.name}  (bound at ${redactHome(res.bindingDir!)})`);
+    } else if (res.source === "default") {
+      console.log(`(no binding here — global default '${res.name}' applies)`);
+    } else {
+      console.log("(no binding here, no global default — run: csw login <adapter>)");
+    }
+    return;
+  }
+
+  if (pos.length !== 1) throw new CliError("Usage: csw local [<context>]");
+  forbidBroadDir(dir);
+  const name = pos[0];
+
+  let created = false;
+  const config = mutateConfig((c) => {
+    if (!c.contexts[name]) {
+      c.contexts[name] = { accounts: [] };
+      created = true;
+    }
+    c.bindings[dir] = name;
+  });
+
+  console.log(`${redactHome(dir)} → ${name}${created ? " (new context)" : ""}`);
+  const accounts = config.contexts[name].accounts;
+  if (accounts.length === 0) {
+    console.log(`Now give it identities: csw login <adapter>   (${adapterNames().join(", ")})`);
+  } else {
+    console.log(`Accounts: ${accounts.join(", ")}`);
+    const denied = deniedAdapters(config, name);
+    if (denied.length > 0) console.log(`Denied: ${denied.join(", ")}`);
+  }
+  hintHookIfMissing();
+}
+
+export function cmdLogin(args: string[]): void {
+  const { pos, opts } = parseArgs(args, {
+    valueFlags: { "--as": "as" },
+    boolFlags: { "--global": "global" }
+  });
+  if (pos.length !== 1) {
+    throw new CliError(
+      `Usage: csw login <adapter> [--as <name>] [--global]\nAdapters: ${adapterNames().join(", ")}`
+    );
+  }
+  const adapter = getAdapter(pos[0]);
+  if (adapter.name === "kubernetes") {
+    throw new CliError(
+      "kubernetes has no login flow — reference a kubeconfig instead:\n" +
+        "  csw account add kubernetes --name <n> --kubeconfig <file> --context <ctx>"
+    );
+  }
+
+  ensureConfig();
+  const dir = realpathSafe(process.cwd());
+  let config = loadConfig();
+
+  // 1. Target context: the folder's binding, or an implicit one created now.
+  //    A folder only ever gains an identity through this explicit act of
+  //    logging in inside it — never through anything a repo ships.
+  let contextName: string;
+  if (opts.global) {
+    contextName = config.defaultContext ?? "global";
+    if (!config.defaultContext) {
+      config = mutateConfig((c) => {
+        if (!c.contexts[contextName]) c.contexts[contextName] = { accounts: [] };
+        c.defaultContext = contextName;
+      });
+      console.log(`Created global default context '${contextName}'.`);
+    }
+  } else {
+    const res = resolveContext(config, { env: {}, cwd: dir });
+    if (res.source === "binding") {
+      contextName = res.name!;
+    } else {
+      forbidBroadDir(dir);
+      contextName = contextNameForDir(config, dir);
+      const created = contextName;
+      config = mutateConfig((c) => {
+        if (!c.contexts[created]) c.contexts[created] = { accounts: [] };
+        c.bindings[dir] = created;
+      });
+      console.log(`${redactHome(dir)} → ${contextName} (new context, bound to this folder)`);
+    }
+  }
+
+  // 2. Account: reuse if it exists, otherwise fresh isolated state.
+  const accountName = (opts.as as string | undefined) ?? contextName;
+  if (!ACCOUNT_NAME_RE.test(accountName)) {
+    throw new CliError(`Invalid account name '${accountName}'. Use letters, digits, dots, dashes, underscores.`);
+  }
+  const id = `${adapter.name}:${accountName}`;
+  let account = config.accounts[id];
+  let createdFreshDir: string | undefined;
+
+  if (account) {
+    console.log(`Using existing account ${id}${account.system ? " (machine default)" : ""}.`);
+  } else {
+    if (!adapter.freshStateDir) {
+      throw new CliError(`Adapter '${adapter.name}' cannot create fresh state; use csw account add with --path.`);
+    }
+    const stateDir = adapter.freshStateDir(accountName);
+    if (fs.existsSync(stateDir) && fs.readdirSync(stateDir).length > 0) {
+      throw new CliError(
+        `${redactHome(stateDir)} already exists and is not empty.\n` +
+          `Reference it instead: csw account add ${adapter.name} --name ${accountName} --path ${stateDir}`
+      );
+    }
+    ensureDir(stateDir);
+    createdFreshDir = stateDir;
+    account = { adapter: adapter.name, stateDir };
+  }
+
+  // 3. Log in when needed: always for fresh state; for an existing account
+  //    only when its identity check fails. `csw account login` forces re-auth.
+  let needLogin = Boolean(createdFreshDir);
+  if (!needLogin && !account.system && adapter.identity && cliInstalled(adapter.cli)) {
+    const identity = runIdentity(account);
+    if (!identity.ok) needLogin = true;
+  }
+
+  if (needLogin) {
+    if (!adapter.loginCommand) throw new CliError(`Adapter '${adapter.name}' has no login command.`);
+    const argv = adapter.loginCommand(account);
+    if (!cliInstalled(argv[0])) {
+      if (createdFreshDir) fs.rmSync(createdFreshDir, { recursive: true, force: true });
+      throw new CliError(`${argv[0]} is not installed (or not on PATH).`);
+    }
+    console.log(`Launching login: ${argv.join(" ")}`);
+    const result = spawnSync(argv[0], argv.slice(1), {
+      env: applyEnv(process.env, loginEnvFor(account)),
+      stdio: "inherit"
+    });
+    if (result.status !== 0) {
+      if (createdFreshDir) fs.rmSync(createdFreshDir, { recursive: true, force: true });
+      throw new CliError(`Login failed or was cancelled (exit ${result.status ?? "unknown"}). Nothing was saved.`);
+    }
+  }
+
+  // 4. Pin the identity; warn if it duplicates another account of this adapter
+  //    (the "logged into the wrong account" accident).
+  if (adapter.identity && cliInstalled(adapter.cli)) {
+    const identity = runIdentity(account);
+    if (identity.ok) {
+      account.pin = identity.summary;
+      console.log(`  ok identity: ${identity.summary} (pinned)`);
+      for (const [otherId, other] of Object.entries(config.accounts)) {
+        if (otherId !== id && other.adapter === adapter.name && other.pin === identity.summary) {
+          console.log(`  !! same identity as ${otherId} — did you log into the account you meant?`);
+        }
+      }
+    } else {
+      console.log(`  !  identity: ${identity.summary}`);
+    }
+  }
+
+  // 5. Save the account and swap it into the context's slot for this adapter.
+  let replaced: string | undefined;
+  mutateConfig((c) => {
+    if (!c.contexts[contextName]) c.contexts[contextName] = { accounts: [] };
+    c.accounts[id] = account!;
+    const ctx = c.contexts[contextName];
+    const slot = ctx.accounts.findIndex((a) => a !== id && c.accounts[a]?.adapter === adapter.name);
+    if (slot >= 0) {
+      replaced = ctx.accounts[slot];
+      ctx.accounts[slot] = id;
+    } else if (!ctx.accounts.includes(id)) {
+      ctx.accounts.push(id);
+    }
+  });
+
+  console.log(`Context '${contextName}': ${adapter.name} → ${id}${replaced ? ` (replaced ${replaced})` : ""}`);
+  if (hookActiveHere()) console.log("Active from your next prompt.");
+  else {
+    hintHookIfMissing();
+    console.log(`Until then: csw run -- ${adapter.cli} ...`);
+  }
+}
+
+export function cmdSetup(args: string[]): void {
+  const { pos, opts } = parseArgs(args, { valueFlags: { "--shell": "shell" } });
+  if (pos.length > 0) throw new CliError("Usage: csw setup [--shell zsh|bash]");
+
+  ensureConfig();
+  console.log(`Config: ${redactHome(configPath())}`);
+
+  const shell = (opts.shell as string | undefined) ?? (process.env.SHELL?.endsWith("bash") ? "bash" : "zsh");
+  if (shell !== "zsh" && shell !== "bash") throw new CliError("Supported shells: zsh, bash");
+  const rcFile = path.join(os.homedir(), shell === "zsh" ? ".zshrc" : ".bashrc");
+  const existing = fs.existsSync(rcFile) ? fs.readFileSync(rcFile, "utf8") : "";
+
+  if (existing.includes("csw hook")) {
+    console.log(`Hook already installed in ${redactHome(rcFile)}.`);
+  } else {
+    fs.appendFileSync(
+      rcFile,
+      `\n# credswitch — automatic per-folder identity switching\neval "$(csw hook ${shell})"\n`
+    );
+    console.log(`Installed hook in ${redactHome(rcFile)}.`);
+    console.log(`Restart your shell (or run: exec ${shell}) to activate.`);
+  }
+
+  console.log(`
+Then, in any project folder:
+  csw login claude        # give THIS folder its own Claude account (or azure, gcloud, github, codex)
+  claude                  # uses that folder's identity — and only there`);
 }

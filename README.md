@@ -27,44 +27,50 @@ Contexts are **fail-closed**. A provider you didn't put in the context is *denie
 
 ```sh
 npm install -g credswitch
+csw setup        # once: creates the config, adds the shell hook to your rc file
 ```
 
-Requires Node 20+ (if you use Claude Code or Codex, you already have it). macOS and Linux; zsh and bash hooks.
+Requires Node 20+ (if you use Claude Code or Codex, you already have it). macOS and Linux; zsh and bash.
 
-## 60-second start
+## The whole workflow
 
 ```sh
-csw init
-
-# A fresh, isolated Azure login (launches the normal `az login` browser flow):
-csw account add azure --name acme
-
-# Reference logins you already have (nothing is copied or re-authenticated):
-csw account add github --name work --path ~/.config/gh
-csw account add claude --system            # explicitly: the machine's default Claude login
-
-# Compose accounts into a context, then bind it to a folder tree:
-csw context add acme azure:acme github:work claude:default
-csw bind acme --dir ~/clients/acme
-
-# Auto-switch on cd — add once to ~/.zshrc (or `hook bash` for bash):
-echo 'eval "$(csw hook zsh)"' >> ~/.zshrc
-
-# Verify everything: paths, live "who am I" checks, drift against pinned identities:
-csw doctor
+cd ~/clients/acme
+csw login claude     # browser login → THIS folder now has its own Claude account
+claude               # you're acme's identity here — and only here
 ```
 
-Or skip the hook entirely and be explicit:
+That one `csw login` created an isolated account, ran the provider's real login,
+verified and pinned who you are, named a context after the folder, and bound the
+folder tree to it — effective at your next prompt, in the shell you're already in.
+Add more providers the same way:
 
 ```sh
-csw run --context acme -- az group list
-csw run --context acme -- claude        # agent + all its subprocesses get acme's identity
-eval "$(csw shell acme)"                # pin the current shell to acme
+csw login azure      # az login, isolated to this folder
+csw login github
+csw login azure --global      # or: set your machine-wide default identity
 ```
 
-## The model
+Folders you didn't log in inside just use your global default. Nest folders and
+the nearest binding wins. Share one identity across several folders by naming it:
 
-Four primitives:
+```sh
+cd ~/clients/acme-second-repo
+csw local acme       # bind this folder to the existing 'acme' context
+```
+
+And to see or verify what's active:
+
+```sh
+csw current --explain    # what's active, why, and what's denied
+csw doctor               # live "who am I" per provider + drift against pins
+csw run -c acme -- az group list    # or be explicit, no hook needed
+```
+
+## Under the hood
+
+`csw login` and `csw local` drive four primitives you can also manage directly
+(`csw account`, `csw context`, `csw bind` — see Plumbing below):
 
 | Primitive | Example | What it is |
 |---|---|---|
@@ -134,31 +140,34 @@ credswitch never reads, writes, copies, or proxies credentials. It only decides 
 
 ## Commands
 
+Everyday:
+
 ```
-csw init                                      create the config
-csw account add <adapter> --name <n>          fresh isolated login (transactional)
-csw account add <adapter> --name <n> --path <dir>   reference existing state
-csw account add <adapter> --system            explicit machine default
-csw account login <adapter>:<name>            (re)run the provider's login
-csw account pin <adapter>:<name>              accept the current identity as the pin
-csw account list | remove <id>
-csw context add <name> <adapter>:<acct> ...   compose a context
-csw context set <name> <adapter>:<acct> ...   replace a context's accounts
-csw context remove <name>
-csw list                                      contexts, accounts, bindings
-csw use <context>                             global default
-csw bind <context> [--dir <dir>]              folder tree → context
-csw unbind [--dir <dir>]
+csw setup                                     one-time: config + shell hook
+csw login <adapter> [--as <n>] [--global]     give THIS folder its own identity
+csw local [<context>]                         bind this folder to a named context (blank: show)
 csw current [--explain]                       what's active, why, and what's denied
 csw run [--context <ctx>] -- <cmd> [args]     one command, fully resolved identity
-csw shell [<context>] | csw shell --off       pin / unpin this shell
-csw hook <zsh|bash>                           auto-switch hook
+csw list                                      contexts, accounts, bindings
 csw doctor [<context>]                        paths, CLIs, live identities, drift
+```
+
+Plumbing (the porcelain drives these; use them for reference imports, kubeconfigs, renames):
+
+```
+csw init                                      create the config only
+csw account add <adapter> --name <n> [--path <dir>] [--kubeconfig <f>] [--system] [--context <c>] [--no-login]
+csw account login <id> | pin <id> | list | remove <id>
+csw context add|set <name> <adapter>:<acct> ... | remove <name>
+csw use <context>                             global default
+csw bind <context> [--dir <dir>] | unbind [--dir <dir>]
+csw shell [<context>] | csw shell --off       pin / unpin this shell
+csw hook <zsh|bash>                           print the auto-switch hook
 ```
 
 ## The hook, honestly
 
-The zsh/bash hook is resolver-backed: it cannot disagree with `csw current`. It applies your default context in shells outside any bound tree, switches on entering one (nearest binding wins, symlinks canonicalized), and switches back on leaving. The pure-shell fast path only invokes `csw` on transitions, so `cd` stays fast. If resolution ever *fails*, the hook clears every managed variable and prints a warning — fail closed, never stale. Shells pinned with `csw shell` are left alone.
+The zsh/bash hook runs before each prompt (like direnv) and is resolver-backed: it cannot disagree with `csw current`. It applies your default context in shells outside any bound tree, switches on entering one (nearest binding wins, symlinks canonicalized), switches back on leaving — and because it's per-prompt with a config generation stamp, `csw login`, `csw local`, and account swaps take effect at the *next prompt in every open shell*, no cd required. The pure-shell fast path only invokes `csw` when something changed, so prompts stay fast. If resolution ever *fails*, the hook clears every managed variable and prints a warning — fail closed, never stale. Shells pinned with `csw shell` are left alone.
 
 ## How it compares
 
@@ -172,7 +181,7 @@ The zsh/bash hook is resolver-backed: it cannot disagree with `csw current`. It 
 - Denied providers fail with provider-specific messages: `gh` and `kubectl` say not-logged-in cleanly; `gcloud` and `codex` complain about the unwritable/missing denied directory. Blunt, but closed — add the account (or a `--system` account) to the context to enable a provider.
 - The deny/clear guarantees apply *inside contexts* (`csw run`, pinned shells, hooked shells). A shell with no hook and no pin is whatever your machine is.
 - Codex's identity probe proves login state but not *which* account — its pin is a weak fingerprint. Azure, gcloud, GitHub, and Claude pins carry real identities.
-- Bindings are local to your machine (`~/.config/credswitch`). Committed, in-repo context manifests are deliberately absent until they can ship with a trust model — a cloned repo must never silently select your production identity.
+- A folder only ever *gains* an identity when you run `csw login`/`csw local` inside it. Bindings are local to your machine (`~/.config/credswitch`); committed, in-repo context manifests are deliberately absent until they can ship with a trust model — a cloned repo must never silently select your production identity.
 - Windows: not yet. PowerShell hook and native-profile adapters (AWS) are next.
 
 ## Roadmap

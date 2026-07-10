@@ -150,8 +150,11 @@ export function mutateConfig(mutator: (config: Config) => void): Config {
 
 /** Regenerate the "dir<TAB>context" list consumed by the shell hook's fast path. */
 export function writeBindingsList(config: Config): void {
-  const lines = Object.entries(config.bindings)
+  const entries = Object.entries(config.bindings)
     .map(([dir, ctx]) => `${dir}\t${ctx}`)
     .sort();
-  atomicWrite(bindingsListPath(), lines.length > 0 ? `${lines.join("\n")}\n` : "");
+  // The #gen stamp changes on every save, so open shells re-apply their env
+  // at the next prompt after ANY config change, not just binding transitions.
+  const lines = [`#gen\t${Date.now().toString(36)}`, ...entries];
+  atomicWrite(bindingsListPath(), `${lines.join("\n")}\n`);
 }

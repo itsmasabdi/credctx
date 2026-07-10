@@ -1,5 +1,32 @@
 # Changelog
 
+## 0.3.0 — 2026-07-10
+
+The pyenv moment: a porcelain layer so the everyday workflow is two commands.
+
+- **`csw setup`** — one-time: creates the config and installs the shell hook
+  into your rc file (idempotent).
+- **`csw login <adapter>`** — gives the *current folder* its own identity in
+  one command: infers or creates the context (named after the folder), binds
+  the folder, creates isolated account state, runs the provider's real login,
+  pins the verified identity, and swaps it into the context's adapter slot.
+  `--as <name>` reuses/creates a specific account; `--global` targets the
+  machine-wide default context (creating it if needed). Warns when the fresh
+  login has the same identity as another account of that adapter (the
+  "logged into the wrong account" accident). Refuses to implicitly bind `$HOME`
+  or `/`.
+- **`csw local [<context>]`** — bind the current folder to a named context
+  (created if missing); with no argument, shows what applies here.
+- **Hook now runs per prompt** (like direnv) instead of per `cd`, with a config
+  generation stamp: `csw login`, `csw local`, and account swaps take effect at
+  the next prompt in every open shell — no cd dance, no restart.
+- Help and README restructured around Everyday vs Plumbing. All existing
+  commands unchanged.
+
+Security model unchanged: switching is automatic everywhere, but a folder only
+ever *gains* an identity through an explicit `csw login`/`csw local` you run
+inside it — never from anything a repository ships.
+
 ## 0.2.1 — 2026-07-10
 
 Docs-only: README badges, sanitized examples, SECURITY.md and CHANGELOG

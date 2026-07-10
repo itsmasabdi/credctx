@@ -9,7 +9,10 @@ import {
   cmdHook,
   cmdInit,
   cmdList,
+  cmdLocal,
+  cmdLogin,
   cmdRun,
+  cmdSetup,
   cmdShell,
   cmdUnbind,
   cmdUse
@@ -18,39 +21,34 @@ import { adapterNames } from "./adapters.js";
 import { configPath, stateRoot } from "./paths.js";
 import { CliError, redactHome } from "./util.js";
 
-const VERSION = "0.2.1";
+const VERSION = "0.3.0";
 
 function printHelp(): void {
-  console.log(`credswitch ${VERSION} — one identity context per project, for every CLI and AI agent.
+  console.log(`credswitch ${VERSION} — every folder gets its own identity, for every CLI and AI agent.
 
-Usage:
-  csw init                                     create the config file
-  csw account add <adapter> --name <name>      fresh isolated account (launches the provider's login)
-      [--path <dir>]                           ...or reference existing provider state (never copied)
-      [--kubeconfig <file>]                    ...kubernetes: reference a kubeconfig file
-      [--system]                               ...explicitly use the machine's default login
-      [--context <ctx>] [--no-login]
-  csw account list
-  csw account login <adapter>:<name>           (re)run the provider's login for an account
-  csw account pin <adapter>:<name>             record the current identity; doctor fails on drift
-  csw account remove <adapter>:<name>          config only — never deletes credential state
-  csw context add <name> <adapter>:<acct> ...  compose accounts into a context
-  csw context set <name> <adapter>:<acct> ...  replace a context's accounts
-  csw context remove <name>
-  csw list                                     contexts, accounts, bindings
-  csw use <context>                            set the global default context
-  csw bind <context> [--dir <dir>]             this folder tree selects <context>
-  csw unbind [--dir <dir>]
+Everyday:
+  csw setup                                    one-time: config + shell hook (auto-switching)
+  csw login <adapter> [--as <n>] [--global]    give THIS folder its own <adapter> identity
+  csw local [<context>]                        bind this folder to a named context (blank: show)
   csw current [--explain]                      resolved context (and why)
-  csw run [--context <ctx>] -- <cmd> [args]    run one command inside the context
-  csw shell [<context>]                        eval-able exports; pins this shell
-  csw shell --off                              unpin and clear managed variables
-  csw hook <zsh|bash>                          auto-switch hook for your shell rc
+  csw run [--context <ctx>] -- <cmd> [args]    run one command inside a context
+  csw list                                     contexts, accounts, bindings
   csw doctor [<context>]                       verify paths, CLIs, live identities, drift
+
+Plumbing:
+  csw init                                     create the config file only
+  csw account add <adapter> --name <n> [--path <dir>] [--kubeconfig <f>] [--system] [--context <c>] [--no-login]
+  csw account list | login <id> | pin <id> | remove <id>
+  csw context add|set <name> <adapter>:<acct> ... | remove <name>
+  csw use <context>                            set the global default context
+  csw bind <context> [--dir <dir>] | unbind [--dir <dir>]
+  csw shell [<context>] | --off                pin / unpin this shell (eval-able)
+  csw hook <zsh|bash>                          print the auto-switch hook
+  csw env --cwd <dir> | --clear                hook plumbing
 
 Adapters: ${adapterNames().join(", ")}
 An adapter a context omits is DENIED (its CLI sees empty, read-only state).
-Use an explicit --system account to pass the machine default through.
+A folder only gains an identity when YOU run 'csw login' inside it — never from a repo.
 
 Context resolution order:
   --context flag → pinned shell (csw shell) → nearest folder binding
@@ -75,6 +73,12 @@ function main(): void {
       case "--version":
       case "-v":
         return console.log(VERSION);
+      case "setup":
+        return cmdSetup(args);
+      case "login":
+        return cmdLogin(args);
+      case "local":
+        return cmdLocal(args);
       case "init":
         return cmdInit(args);
       case "account":

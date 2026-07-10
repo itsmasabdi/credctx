@@ -113,7 +113,8 @@ test("help prints usage", () => {
   const f = setup();
   const result = csw(f, ["help"]);
   ok(result, "help");
-  assert.match(result.stdout, /Usage:/);
+  assert.match(result.stdout, /Everyday:/);
+  assert.match(result.stdout, /csw login <adapter>/);
   assert.match(result.stdout, /azure, claude, codex/);
   assert.match(result.stdout, /DENIED/);
 });
@@ -271,8 +272,9 @@ test("resolver: default, folder binding, nested binding", () => {
   assert.match(explain.stdout, /Denied: .*github/);
 
   const list = fs.readFileSync(path.join(path.dirname(f.configFile), "bindings.list"), "utf8");
-  const lines = list.trim().split("\n").sort();
-  assert.deepEqual(lines, [`${projectA}\tctx-alice`, `${nested}\tctx-bob`].sort());
+  const lines = list.trim().split("\n");
+  assert.match(lines[0], /^#gen\t/, "gen stamp must lead the list");
+  assert.deepEqual(lines.slice(1).sort(), [`${projectA}\tctx-alice`, `${nested}\tctx-bob`].sort());
   assert.ok(!fs.existsSync(`${f.configFile}.lock`), "lock must be released");
 });
 
@@ -489,7 +491,8 @@ test("hook output is resolver-backed with a fail-closed fallback", () => {
   ok(csw(f, ["init"]), "init");
   const zsh = csw(f, ["hook", "zsh"]);
   ok(zsh, "hook zsh");
-  assert.match(zsh.stdout, /add-zsh-hook chpwd _credswitch_hook/);
+  assert.match(zsh.stdout, /add-zsh-hook precmd _credswitch_hook/);
+  assert.match(zsh.stdout, /#gen/);
   assert.match(zsh.stdout, /csw env --cwd/);
   assert.match(zsh.stdout, /unset .*AZURE_CONFIG_DIR/);
   assert.ok(zsh.stdout.includes("bindings.list"));
@@ -514,12 +517,13 @@ test("zsh hook applies bindings, default, and clears on leave", { skip: !zshAvai
   ok(csw(f, ["use", "ctx-bob"]), "use");
   ok(csw(f, ["bind", "ctx-alice", "--dir", projectA]), "bind");
 
+  // precmd doesn't fire in non-interactive zsh; invoke the hook as a prompt would
   const script = `
 eval "$(csw hook zsh)"
 echo "start:\${CREDSWITCH_CONTEXT:-none}"
-cd ${nested}
+cd ${nested}; _credswitch_hook
 echo "nested:\${CREDSWITCH_CONTEXT:-none}"
-cd /
+cd /; _credswitch_hook
 echo "out:\${CREDSWITCH_CONTEXT:-none}:\${AZURE_CONFIG_DIR:+set}"
 `;
   const result = spawnSync("zsh", ["-f", "-c", script], {
@@ -532,4 +536,132 @@ echo "out:\${CREDSWITCH_CONTEXT:-none}:\${AZURE_CONFIG_DIR:+set}"
   assert.match(result.stdout, /start:ctx-bob/);
   assert.match(result.stdout, /nested:ctx-alice/);
   assert.match(result.stdout, /out:ctx-bob:set/);
+});
+
+test("zsh hook re-applies when the config generation changes", { skip: !zshAvailable }, () => {
+  const f = setup();
+  seedTwoAccounts(f);
+  const projectA = path.join(f.home, "proj-a");
+  fs.mkdirSync(projectA, { recursive: true });
+  ok(csw(f, ["bind", "ctx-alice", "--dir", projectA]), "bind");
+
+  // Same shell, same directory: swap the context's account between hook runs.
+  const script = `
+eval "$(csw hook zsh)"
+echo "before:$(az account show 2>/dev/null | grep -o '"alice"\\|"bob"')"
+csw context set ctx-alice azure:bob >/dev/null
+_credswitch_hook
+echo "after:$(az account show 2>/dev/null | grep -o '"alice"\\|"bob"')"
+`;
+  const result = spawnSync("zsh", ["-f", "-c", script], { encoding: "utf8", cwd: projectA, env: f.env });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /before:"alice"/);
+  assert.match(result.stdout, /after:"bob"/);
+});
+
+test("csw local binds the folder, creating the context; argless shows state", () => {
+  const f = setup();
+  seedTwoAccounts(f);
+  const projectC = path.join(f.home, "proj-c");
+  fs.mkdirSync(projectC, { recursive: true });
+
+  const before = csw(f, ["local"], { cwd: projectC });
+  ok(before, "local argless");
+  assert.match(before.stdout, /no binding here/);
+
+  const bindNew = csw(f, ["local", "brand-new"], { cwd: projectC });
+  ok(bindNew, "local new context");
+  assert.match(bindNew.stdout, /→ brand-new \(new context\)/);
+  assert.match(bindNew.stdout, /csw login <adapter>/);
+
+  const after = csw(f, ["local"], { cwd: projectC });
+  assert.match(after.stdout, /brand-new {2}\(bound at /);
+
+  const home = csw(f, ["local", "ctx-alice"], { cwd: f.home });
+  assert.notEqual(home.status, 0);
+  assert.match(home.stderr, /home directory/);
+});
+
+test("csw login creates context, binding, and account from a bare folder", () => {
+  const f = setup();
+  ok(csw(f, ["init"]), "init");
+  const project = path.join(f.home, "acme-app");
+  fs.mkdirSync(project, { recursive: true });
+
+  const login = csw(f, ["login", "azure"], { cwd: project });
+  ok(login, "login azure");
+  assert.match(login.stdout, /→ acme-app \(new context, bound to this folder\)/);
+  assert.match(login.stdout, /Launching login: az login/);
+  assert.match(login.stdout, /ok identity: fresh-login.*\(pinned\)/);
+  assert.match(login.stdout, /Context 'acme-app': azure → azure:acme-app/);
+
+  const config = JSON.parse(fs.readFileSync(f.configFile, "utf8"));
+  assert.deepEqual(config.contexts["acme-app"].accounts, ["azure:acme-app"]);
+  assert.equal(config.bindings[project], "acme-app");
+
+  const run = csw(f, ["run", "--", "az", "account", "show"], { cwd: project });
+  ok(run, "run in bound folder");
+  assert.match(run.stdout, /fresh-login/);
+});
+
+test("csw login swaps the adapter slot in an already-bound folder", () => {
+  const f = setup();
+  seedTwoAccounts(f);
+  const projectA = path.join(f.home, "proj-a");
+  fs.mkdirSync(projectA, { recursive: true });
+  ok(csw(f, ["bind", "ctx-alice", "--dir", projectA]), "bind");
+
+  const login = csw(f, ["login", "azure", "--as", "replacement"], { cwd: projectA });
+  ok(login, "login swap");
+  assert.match(login.stdout, /Context 'ctx-alice': azure → azure:replacement \(replaced azure:alice\)/);
+  // fake identities are all "fresh-login", so the duplicate-identity guardrail fires too
+  assert.match(login.stdout, /\(pinned\)/);
+
+  const config = JSON.parse(fs.readFileSync(f.configFile, "utf8"));
+  assert.deepEqual(config.contexts["ctx-alice"].accounts, ["azure:replacement"]);
+  assert.ok(config.accounts["azure:alice"], "replaced account still exists");
+});
+
+test("csw login warns when two accounts share an identity", () => {
+  const f = setup();
+  ok(csw(f, ["init"]), "init");
+  const one = path.join(f.home, "client-one");
+  const two = path.join(f.home, "client-two");
+  fs.mkdirSync(one, { recursive: true });
+  fs.mkdirSync(two, { recursive: true });
+
+  ok(csw(f, ["login", "azure"], { cwd: one }), "first login");
+  const second = csw(f, ["login", "azure"], { cwd: two });
+  ok(second, "second login");
+  // fake az always logs in as "fresh-login", so this simulates the wrong-account accident
+  assert.match(second.stdout, /!! same identity as azure:client-one/);
+});
+
+test("csw login --global targets (or creates) the default context", () => {
+  const f = setup();
+  ok(csw(f, ["init"]), "init");
+  const login = csw(f, ["login", "azure", "--global"], { cwd: f.home });
+  ok(login, "login --global");
+  assert.match(login.stdout, /Created global default context 'global'/);
+  assert.match(login.stdout, /Context 'global': azure → azure:global/);
+
+  const config = JSON.parse(fs.readFileSync(f.configFile, "utf8"));
+  assert.equal(config.defaultContext, "global");
+  assert.deepEqual(config.bindings, {});
+});
+
+test("csw setup installs the shell hook idempotently", () => {
+  const f = setup();
+  const rc = path.join(f.home, ".zshrc");
+
+  const first = csw(f, ["setup", "--shell", "zsh"]);
+  ok(first, "setup");
+  assert.match(first.stdout, /Installed hook in/);
+  const content = fs.readFileSync(rc, "utf8");
+  assert.ok(content.includes('eval "$(csw hook zsh)"'));
+
+  const again = csw(f, ["setup", "--shell", "zsh"]);
+  ok(again, "setup again");
+  assert.match(again.stdout, /already installed/);
+  assert.equal(fs.readFileSync(rc, "utf8"), content, "rc file must not grow");
 });
