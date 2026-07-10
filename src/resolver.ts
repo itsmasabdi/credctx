@@ -27,8 +27,8 @@ export function resolveContext(config: Config, opts: ResolveOptions): Resolution
     return { name: opts.flag, source: "flag" };
   }
 
-  if (opts.env.AGENTCTX_OVERRIDE === "1" && opts.env.AGENTCTX_CONTEXT) {
-    const name = opts.env.AGENTCTX_CONTEXT;
+  if (opts.env.CREDCTX_OVERRIDE === "1" && opts.env.CREDCTX_CONTEXT) {
+    const name = opts.env.CREDCTX_CONTEXT;
     if (!config.contexts[name]) {
       throw new CliError(
         `This shell is pinned to context '${name}', which no longer exists.\n` +
@@ -55,12 +55,12 @@ export function resolveContext(config: Config, opts: ResolveOptions): Resolution
     dir = parent;
   }
 
-  if (opts.env.AGENTCTX_CONTEXT) {
-    const name = opts.env.AGENTCTX_CONTEXT;
+  if (opts.env.CREDCTX_CONTEXT) {
+    const name = opts.env.CREDCTX_CONTEXT;
     if (!config.contexts[name]) {
       throw new CliError(
-        `This process inherited context '${name}' (AGENTCTX_CONTEXT), which no longer exists.\n` +
-          `Run 'eval "$(csw shell --off)"' or unset AGENTCTX_CONTEXT, or recreate the context.`
+        `This process inherited context '${name}' (CREDCTX_CONTEXT), which no longer exists.\n` +
+          `Run 'eval "$(csw shell --off)"' or unset CREDCTX_CONTEXT, or recreate the context.`
       );
     }
     return { name, source: "inherited" };
@@ -90,7 +90,7 @@ export function describeSource(res: Resolution): string {
     case "binding":
       return `folder binding at ${res.bindingDir}`;
     case "inherited":
-      return "inherited from parent process (AGENTCTX_CONTEXT)";
+      return "inherited from parent process (CREDCTX_CONTEXT)";
     case "default":
       return "global default (csw use)";
     case "none":

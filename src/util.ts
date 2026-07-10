@@ -77,7 +77,7 @@ export function withLock<T>(lockPath: string, fn: () => T): T {
         continue; // lock vanished between stat/unlink — retry immediately
       }
       if (Date.now() > deadline) {
-        throw new CliError(`Another agentctx process holds the config lock (${lockPath}). Retry in a moment.`);
+        throw new CliError(`Another credctx process holds the config lock (${lockPath}). Retry in a moment.`);
       }
       sleepSync(50);
     }

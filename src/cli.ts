@@ -21,7 +21,7 @@ import { CliError, redactHome } from "./util.js";
 const VERSION = "0.2.0";
 
 function printHelp(): void {
-  console.log(`agentctx ${VERSION} — one identity context per project, for every CLI and AI agent.
+  console.log(`credctx ${VERSION} — one identity context per project, for every CLI and AI agent.
 
 Usage:
   csw init                                     create the config file
@@ -54,11 +54,11 @@ Use an explicit --system account to pass the machine default through.
 
 Context resolution order:
   --context flag → pinned shell (csw shell) → nearest folder binding
-  → inherited (AGENTCTX_CONTEXT) → default (csw use) → none
+  → inherited (CREDCTX_CONTEXT) → default (csw use) → none
 
 Environment:
-  AGENTCTX_CONFIG        override config file   (default ${redactHome(configPath())})
-  AGENTCTX_STATE_HOME    override state root    (default ${redactHome(stateRoot())})`);
+  CREDCTX_CONFIG        override config file   (default ${redactHome(configPath())})
+  CREDCTX_STATE_HOME    override state root    (default ${redactHome(stateRoot())})`);
 }
 
 function main(): void {

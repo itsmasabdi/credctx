@@ -629,9 +629,9 @@ export function cmdShell(args: string[]): void {
   }
 
   const env = envForContext(config, name);
-  env.AGENTCTX_OVERRIDE = "1"; // pin: the hook will leave this shell alone
-  env.AGENTCTX_BOUND_DIR = null;
-  env.AGENTCTX_HOOK_KEY = null;
+  env.CREDCTX_OVERRIDE = "1"; // pin: the hook will leave this shell alone
+  env.CREDCTX_BOUND_DIR = null;
+  env.CREDCTX_HOOK_KEY = null;
   for (const line of shellLines(env)) console.log(line);
 }
 
@@ -665,8 +665,8 @@ export function cmdEnv(args: string[]): void {
   }
 
   const env = envForContext(config, res.name);
-  env.AGENTCTX_BOUND_DIR = res.bindingDir ?? null;
-  env.AGENTCTX_OVERRIDE = null;
+  env.CREDCTX_BOUND_DIR = res.bindingDir ?? null;
+  env.CREDCTX_OVERRIDE = null;
   for (const line of shellLines(env)) console.log(line);
 }
 
