@@ -33,6 +33,27 @@ function fallbackDeny(): string {
   return [...exports.sort(), `unset ${[...unsets].sort().join(" ")}`].join("; ");
 }
 
+/**
+ * Bootstrap installed by `csw setup`. The hook already fails closed when
+ * resolution fails; this also fails closed when the `csw` executable itself
+ * is unavailable (for example after changing Node versions).
+ */
+export function shellBootstrap(shell: "zsh" | "bash"): string {
+  const warning =
+    shell === "zsh"
+      ? `print -u2 "credswitch: 'csw' is unavailable — denied all providers (fix PATH, then restart the shell)"`
+      : `echo "credswitch: 'csw' is unavailable — denied all providers (fix PATH, then restart the shell)" >&2`;
+
+  return `# credswitch — automatic per-folder identity switching
+if command -v csw >/dev/null 2>&1; then
+  eval "$(csw hook ${shell})"
+else
+  eval ${shellQuote(fallbackDeny())}
+  ${warning}
+fi
+`;
+}
+
 export function zshHook(): string {
   const list = shellQuote(bindingsListPath());
   return `# credswitch — automatic per-folder identity switching (zsh)

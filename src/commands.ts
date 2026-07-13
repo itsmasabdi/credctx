@@ -21,7 +21,7 @@ import {
   shellLines,
   type EnvOverrides
 } from "./env.js";
-import { bashHook, zshHook } from "./hooks.js";
+import { bashHook, shellBootstrap, zshHook } from "./hooks.js";
 import { cliInstalled, runIdentity } from "./identity.js";
 import { configPath, stateRoot } from "./paths.js";
 import { describeSource, resolveContext } from "./resolver.js";
@@ -1026,10 +1026,7 @@ export function cmdSetup(args: string[]): void {
   if (existing.includes("csw hook")) {
     console.log(`Hook already installed in ${redactHome(rcFile)}.`);
   } else {
-    fs.appendFileSync(
-      rcFile,
-      `\n# credswitch — automatic per-folder identity switching\neval "$(csw hook ${shell})"\n`
-    );
+    fs.appendFileSync(rcFile, `\n${shellBootstrap(shell)}`);
     console.log(`Installed hook in ${redactHome(rcFile)}.`);
     console.log(`Restart your shell (or run: exec ${shell}) to activate.`);
   }

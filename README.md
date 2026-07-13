@@ -167,7 +167,7 @@ csw hook <zsh|bash>                           print the auto-switch hook
 
 ## The hook, honestly
 
-The zsh/bash hook runs before each prompt (like direnv) and is resolver-backed: it cannot disagree with `csw current`. It applies your default context in shells outside any bound tree, switches on entering one (nearest binding wins, symlinks canonicalized), switches back on leaving — and because it's per-prompt with a config generation stamp, `csw login`, `csw local`, and account swaps take effect at the *next prompt in every open shell*, no cd required. The pure-shell fast path only invokes `csw` when something changed, so prompts stay fast. If resolution ever *fails*, the hook clears every managed variable and prints a warning — fail closed, never stale. Shells pinned with `csw shell` are left alone.
+The zsh/bash hook runs before each prompt (like direnv) and is resolver-backed: it cannot disagree with `csw current`. It applies your default context in shells outside any bound tree, switches on entering one (nearest binding wins, symlinks canonicalized), switches back on leaving — and because it's per-prompt with a config generation stamp, `csw login`, `csw local`, and account swaps take effect at the *next prompt in every open shell*, no cd required. The pure-shell fast path only invokes `csw` when something changed, so prompts stay fast. If resolution fails—or the `csw` executable is unavailable—the installed bootstrap points every provider at the denied state root, clears every managed token variable, and prints a warning: fail closed, never stale. Shells pinned with `csw shell` are left alone.
 
 ## How it compares
 

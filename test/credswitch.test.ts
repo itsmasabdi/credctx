@@ -742,10 +742,40 @@ test("csw setup installs the shell hook idempotently", () => {
   ok(first, "setup");
   assert.match(first.stdout, /Installed hook in/);
   const content = fs.readFileSync(rc, "utf8");
+  assert.ok(content.includes("if command -v csw"));
   assert.ok(content.includes('eval "$(csw hook zsh)"'));
+  assert.ok(content.includes("denied/azure"), "missing csw must install a fail-closed fallback");
 
   const again = csw(f, ["setup", "--shell", "zsh"]);
   ok(again, "setup again");
   assert.match(again.stdout, /already installed/);
   assert.equal(fs.readFileSync(rc, "utf8"), content, "rc file must not grow");
+});
+
+test("csw setup bootstrap denies providers when csw is unavailable", () => {
+  const f = setup();
+  ok(csw(f, ["setup", "--shell", "zsh"]), "setup");
+  const rc = path.join(f.home, ".zshrc");
+
+  const result = spawnSync(
+    "/bin/zsh",
+    ["-f", "-c", `source ${JSON.stringify(rc)}; print -r -- "$AZURE_CONFIG_DIR|$CODEX_HOME|\${ANTHROPIC_API_KEY-unset}"`],
+    {
+      encoding: "utf8",
+      env: {
+        HOME: f.home,
+        PATH: "/usr/bin:/bin",
+        AZURE_CONFIG_DIR: "/unsafe/azure",
+        CODEX_HOME: "/unsafe/codex",
+        ANTHROPIC_API_KEY: "secret"
+      }
+    }
+  );
+
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stderr, /'csw' is unavailable.*denied all providers/);
+  assert.equal(
+    result.stdout.trim(),
+    `${path.join(f.state, "denied", "azure")}|${path.join(f.state, "denied", "codex")}|unset`
+  );
 });

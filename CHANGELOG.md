@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.3.2 — 2026-07-13
+
+- **Shell startup now fails closed when `csw` is missing**: hooks installed by
+  `csw setup` point every provider at the denied state root and clear managed
+  token variables if the executable is unavailable (for example after a Node
+  version change), instead of falling back to machine-default credentials.
+- Corrected stale pre-rename metadata in `package-lock.json`.
+
 ## 0.3.1 — 2026-07-10
 
 Safety patch on the porcelain, from a pre-promotion review.
